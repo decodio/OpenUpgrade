@@ -69,7 +69,7 @@ migrations = {
         },
         'server': {
             'type': 'git',
-            'url': 'git://github.com/OpenUpgrade/OpenUpgrade.git',
+            'url': 'git://github.com/decodio/OpenUpgrade.git',
             'branch': '10.0',
             'addons_dir': os.path.join('odoo', 'addons'),
             'root_dir': os.path.join(''),
@@ -86,7 +86,7 @@ migrations = {
         },
         'server': {
             'type': 'git',
-            'url': 'git://github.com/OpenUpgrade/OpenUpgrade.git',
+            'url': 'git://github.com/decodio/OpenUpgrade.git',
             'branch': '9.0',
             'addons_dir': os.path.join('openerp', 'addons'),
             'root_dir': os.path.join(''),
@@ -103,7 +103,7 @@ migrations = {
         },
         'server': {
             'type': 'git',
-            'url': 'git://github.com/OpenUpgrade/OpenUpgrade.git',
+            'url': 'git://github.com/decodio/OpenUpgrade.git',
             'branch': '8.0',
             'addons_dir': os.path.join('openerp', 'addons'),
             'root_dir': os.path.join(''),
@@ -120,7 +120,7 @@ migrations = {
         },
         'server': {
             'type': 'git',
-            'url': 'git://github.com/OpenUpgrade/OpenUpgrade.git',
+            'url': 'git://github.com/decodio/OpenUpgrade.git',
             'branch': '7.0',
             'addons_dir': os.path.join('openerp', 'addons'),
             'root_dir': os.path.join(''),
@@ -138,7 +138,7 @@ migrations = {
         },
         'server': {
             'type': 'git',
-            'url': 'git://github.com/OpenUpgrade/OpenUpgrade.git',
+            'url': 'git://github.com/decodio/OpenUpgrade.git',
             'branch': '6.1',
             'addons_dir': os.path.join('openerp', 'addons'),
             'root_dir': os.path.join(''),
@@ -156,7 +156,7 @@ migrations = {
         },
         'server': {
             'type': 'git',
-            'url': 'git://github.com/OpenUpgrade/OpenUpgrade.git',
+            'url': 'git://github.com/decodio/OpenUpgrade.git',
             'branch': '6.0',
             'addons_dir': os.path.join('bin', 'addons'),
             'root_dir': os.path.join('bin'),
