@@ -108,6 +108,7 @@ def map_res_partner_type(cr):
 
 @openupgrade.migrate()
 def migrate(cr, version):
+    create_backup_schema(cr)
     openupgrade.update_module_names(
         cr, apriori.renamed_modules.iteritems()
     )
@@ -118,6 +119,30 @@ def migrate(cr, version):
     cleanup_modules(cr)
     map_res_partner_type(cr)
 
+
+def create_backup_schema(cr):
+    cr.execute("""
+        CREATE SCHEMA v8_data;
+        """)
+    cr.execute("""
+        DO $body$ 
+        DECLARE 
+          r RECORD;BEGIN 
+          FOR r   IN 
+          SELECT   * 
+          FROM     information_schema.TABLES 
+          WHERE    table_schema = 'public' 
+          AND      table_type = 'BASE TABLE' 
+          ORDER BY table_name
+          LOOP 
+               EXECUTE 'CREATE TABLE v8_data.v8_' 
+                        || quote_ident(r.table_name) 
+                        || ' AS SELECT * FROM public.' 
+                        || quote_ident(r.table_name) 
+                        || ';'; 
+          END LOOP; 
+        END $body$;
+        """)
 
 def pre_create_columns(cr):
     openupgrade.logged_query(cr, """
