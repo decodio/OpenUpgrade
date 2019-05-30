@@ -105,6 +105,16 @@ def update_product_pricelist_item(cr):
         UPDATE product_pricelist_item
         SET compute_price = 'formula'""")
 
+    # but ones that arguably are meant to be fixed prices should be fixed
+    openupgrade.logged_query(
+        cr,
+        "update product_pricelist_item "
+        "set compute_price='fixed', fixed_price=price_surcharge "
+        "where compute_price='formula' and price_discount=100 and "
+        "price_surcharge > 0 and coalesce(price_min_margin, 0)=0 and "
+        "coalesce(price_max_margin, 0)=0"
+    )
+
 
 def update_product_template(cr):
 
@@ -186,6 +196,86 @@ def map_product_template_type(cr):
         table='product_template', write='sql')
 
 
+def update_product_supplierinfo(env):
+    """ Merge obsolete partner_pricelistinfo with product_supplierinfo.
+    Store the id of the original pricelistinfo on a custom integer field
+    for later reference."""
+    # Default currency for infos without a company
+    default_currency_id = env['res.company'].search(
+        [], order='id asc', limit=1).currency_id.id
+    env.cr.execute(
+        """ALTER TABLE product_supplierinfo
+        ADD COLUMN openupgrade_migrated_from_pricelist_id INTEGER""")
+    env.cr.execute(
+        """UPDATE product_supplierinfo ps
+        SET openupgrade_migrated_from_pricelist_id = pp.id,
+        min_qty = pp.min_quantity,
+        price = pp.price,
+        currency_id = %s
+        FROM pricelist_partnerinfo pp
+        WHERE pp.suppinfo_id = ps.id
+        """, (default_currency_id,))
+    # Fix currency where company is set
+    env.cr.execute(
+        """UPDATE product_supplierinfo ps
+        SET currency_id = rc.currency_id
+        FROM res_company rc
+        WHERE rc.id = ps.company_id """)
+    openupgrade.logged_query(
+        env.cr,
+        """ INSERT INTO product_supplierinfo (
+            company_id,
+            create_date,
+            create_uid,
+            currency_id,
+            delay,
+            min_qty,
+            name,
+            openupgrade_migrated_from_pricelist_id,
+            price,
+            product_tmpl_id,
+            product_code,
+            product_name,
+            sequence)
+        SELECT
+            ps.company_id,
+            pp.create_date,
+            pp.create_uid,
+            ps.currency_id,
+            ps.delay,
+            pp.min_quantity,
+            ps.name,
+            pp.id,
+            pp.price,
+            ps.product_tmpl_id,
+            ps.product_code,
+            ps.product_name,
+            ps.sequence
+        FROM product_supplierinfo ps, pricelist_partnerinfo pp
+        WHERE pp.id NOT IN (
+                SELECT openupgrade_migrated_from_pricelist_id
+                FROM product_supplierinfo
+                WHERE openupgrade_migrated_from_pricelist_id IS NOT NULL)
+            AND pp.suppinfo_id = ps.id
+        """)
+
+    # Set supplierinfo currencies when suppliers have a specific pricelist
+    # that is not in the company currency
+    openupgrade.logged_query(
+        env.cr,
+        """ UPDATE product_supplierinfo ps
+        SET currency_id = pp.currency_id
+        FROM product_pricelist pp
+            JOIN ir_property ip
+                ON ip.value_reference = 'product.pricelist,'||pp.id
+            JOIN res_company rc ON ip.company_id = rc.id
+            JOIN res_partner rp ON ip.res_id = 'res.partner,'||rp.id
+        WHERE ip.name = 'property_product_pricelist_purchase'
+            AND ps.company_id = rc.id
+            AND rp.id = ps.name
+            AND rc.currency_id != pp.currency_id """)
+
+
 @openupgrade.migrate(use_env=True)
 def migrate(env, version):
     map_base(env.cr)
@@ -199,3 +289,7 @@ def migrate(env, version):
         'update product_pricelist_item set price_discount=-price_discount*100'
     )
     openupgrade_90.convert_binary_field_to_attachment(env, attachment_fields)
+    openupgrade.load_data(
+        env.cr, 'product', 'migrations/9.0.1.2/noupdate_changes.xml',
+    )
+    update_product_supplierinfo(env)

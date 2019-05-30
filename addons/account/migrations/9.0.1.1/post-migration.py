@@ -1,10 +1,21 @@
 # -*- coding: utf-8 -*-
-# © 2016 Serpent Consulting Services Pvt. Ltd.
-# © 2016 Eficent Business and IT Consulting Services S.L.
+# Copyright 2016 Serpent Consulting Services Pvt. Ltd.
+# Copyright 2016 Eficent Business and IT Consulting Services S.L.
+# Copyright 2017 Tecnativa - Pedro M. Baeza
 # License AGPL-3.0 or later (https://www.gnu.org/licenses/agpl.html).
+
 import operator
-from openupgradelib import openupgrade
+from openupgradelib import openupgrade, openupgrade_90
 from openerp.modules.registry import RegistryManager
+from psycopg2.extensions import AsIs
+
+
+account_type_map = [
+    ('account.data_account_type_cash', 'account.data_account_type_liquidity'),
+    ('account.conf_account_type_chk', 'account.data_account_type_liquidity'),
+    ('account.conf_account_type_tax',
+     'account.data_account_type_current_liabilities'),
+]
 
 
 def map_bank_state(cr):
@@ -197,21 +208,34 @@ def cashbox(cr):
     )
     # assign those to the cashbox lines they derive from
     cr.execute(
-        'update account_cashbox_line l set cashbox_id='
-        '(select id from account_bank_statement_cashbox where l.id='
-        'any(%(cashbox_line_ids)s))' % {
+        'update account_cashbox_line l set cashbox_id=cb.id '
+        'from (select id, openupgrade_legacy_9_0_cashbox_line_ids from '
+        'account_bank_statement_cashbox) cb '
+        'where l.id=any(%(cashbox_line_ids)s)' % {
             'cashbox_line_ids': openupgrade.get_legacy_name('cashbox_line_ids')
         }
     )
-    # and now assign the proper cashbox_{start,end}_id values
+    # and now assign the proper cashbox_start_id values
     cr.execute(
-        'update account_bank_statement s set '
-        'cashbox_start_id=(select cashbox_id from account_cashbox_line where '
-        '%(bank_statement_id)s=s.id and %(number_closing)s is null limit 1),'
-        'cashbox_end_id=(select cashbox_id from account_cashbox_line where '
-        '%(bank_statement_id)s=s.id and %(number_opening)s is null limit 1)' %
+        'update account_bank_statement s '
+        'set cashbox_start_id=cbl.cashbox_id '
+        'from (select cashbox_id, %(bank_statement_id)s,  '
+        '%(number_closing)s from account_cashbox_line) cbl '
+        'where s.id=cbl.%(bank_statement_id)s and %(number_closing)s is null' %
         {
             'number_closing': openupgrade.get_legacy_name('number_closing'),
+            'bank_statement_id':
+            openupgrade.get_legacy_name('bank_statement_id'),
+        }
+    )
+
+    # and now assign the proper cashbox_end_id values
+    cr.execute(
+        'update account_bank_statement s set cashbox_end_id=cbl.cashbox_id '
+        'from (select cashbox_id, %(bank_statement_id)s, %(number_opening)s '
+        ' from account_cashbox_line) cbl '
+        'where s.id=cbl.%(bank_statement_id)s and %(number_opening)s is null' %
+        {
             'number_opening': openupgrade.get_legacy_name('number_opening'),
             'bank_statement_id':
             openupgrade.get_legacy_name('bank_statement_id'),
@@ -222,20 +246,48 @@ def cashbox(cr):
 def account_properties(cr):
     # Handle account properties as their names are changed.
     cr.execute("""
-            update ir_property set name = 'property_account_payable_id',
-            fields_id = (select id from ir_model_fields where model
-            = 'res.partner' and name = 'property_account_payable_id')
+        update ir_property set name = 'property_account_payable_id',
+            fields_id = f.id
+        from (select id from ir_model_fields where model
+            = 'res.partner' and name = 'property_account_payable_id') f
             where name = 'property_account_payable' and (res_id like
             'res.partner%' or res_id is null)
-            """)
+           """)
     cr.execute("""
-            update ir_property set fields_id = (select id from
+            update ir_property set name = 'property_account_receivable_id',
+            fields_id = f.id
+            from (select id from
             ir_model_fields where model = 'res.partner' and
-            name = 'property_account_receivable_id'), name =
-            'property_account_receivable_id' where
+            name = 'property_account_receivable_id') f  where
             name = 'property_account_receivable' and (res_id like
             'res.partner%' or res_id is null)
             """)
+
+
+def move_view_accounts(env):
+    """Move accounts of type view to another table, but removing them from the
+    main list for not disturbing normal accounting.
+    """
+    openupgrade.logged_query(
+        env.cr, """
+        CREATE TABLE %s
+        AS SELECT * FROM account_account
+        WHERE %s = 'view'""", (
+            AsIs(openupgrade.get_legacy_name('account_account')),
+            AsIs(openupgrade.get_legacy_name('type')),
+        )
+    )
+    # Remove constraint that delete in cascade children accounts
+    openupgrade.logged_query(
+        env.cr, """
+        ALTER TABLE account_account
+        DROP CONSTRAINT account_account_parent_id_fkey"""
+    )
+    openupgrade.logged_query(
+        env.cr, """
+        DELETE FROM account_account
+        WHERE %s = 'view'""", (AsIs(openupgrade.get_legacy_name('type')),)
+    )
 
 
 def account_internal_type(env):
@@ -319,6 +371,31 @@ def map_account_tax_template_type(cr):
         table='account_tax_template', write='sql')
 
 
+def migrate_account_sequence_fiscalyear(cr):
+    """ Migrate subsequences from fiscalyears to sequence date ranges
+    so that the next number is aligned with the last assigned number """
+    openupgrade.logged_query(
+        cr,
+        """ \
+        INSERT into ir_sequence_date_range
+        (sequence_id, date_from, date_to, number_next)
+        SELECT sequence_main_id, af.date_start, af.date_stop,
+            irs.number_next
+        FROM account_sequence_fiscalyear asf,
+            account_fiscalyear af, ir_sequence irs
+        WHERE asf.fiscalyear_id = af.id
+             and asf.sequence_id = irs.id; """)
+    openupgrade.logged_query(
+        cr,
+        """ \
+        UPDATE ir_sequence SET
+            prefix = REPLACE(prefix, '%%(year)s', '%%(range_year)s'),
+            suffix = REPLACE(suffix, '%%(year)s', '%%(range_year)s'),
+            use_date_range = TRUE
+        WHERE id IN (SELECT sequence_id FROM ir_sequence_date_range)
+        """)
+
+
 def migrate_account_auto_fy_sequence(env):
     """As now Odoo implements a feature for having several sequence numbers
     per date range, we don't need anymore this module. This handles a smooth
@@ -339,6 +416,398 @@ def migrate_account_auto_fy_sequence(env):
         """
     env.cr.execute(query.format('prefix'))
     env.cr.execute(query.format('suffix'))
+
+
+def _fill_aml_tax_line_ids(env, amls, tax_id, tax_amounts):
+    move_line_obj = env['account.move.line']
+    lines_to_write = env['account.move.line']
+    for line in amls:
+        if not line.debit and not line.credit:
+            # Extra line generated by previous <v8 constraint
+            # of one tax code per line. We need to find the
+            # line for the same amount to put the base there
+            env.cr.execute(
+                """
+                SELECT id
+                FROM account_move_line
+                WHERE (
+                    debit = %(amount)s OR
+                    credit = %(amount)s
+                ) AND move_id = %(move_id)s
+                """, {
+                    'amount': tax_amounts[line.id],
+                    'move_id': line.move_id.id,
+                }
+            )
+            row_base2 = env.cr.fetchone()
+            while row_base2:
+                # for multiple lines with same amount
+                line = move_line_obj.browse(row_base2[0])
+                if tax_id not in line.tax_ids.ids:
+                    lines_to_write |= line
+                    break
+                row_base2 = env.cr.fetchone()
+        else:
+            lines_to_write |= line
+    lines_to_write.write({'tax_ids': [(4, tax_id)]})
+
+
+def fill_move_taxes(env):
+    """Try to deduce taxes in account move lines from old tax codes.
+
+    Method followed:
+
+    Tax amounts
+    -----------
+
+    * If the tax code is present in only one tax as tax code, then we can fill
+      tax_line_id with that tax.
+    * If there are more than one tax with that tax code, try to match tax lines
+      with the name of the move line.
+
+    Base amounts
+    ------------
+
+    * If the tax code is present in only one tax as base code, then we can add
+      that tax to tax_ids.
+    * If there are more than one for base amounts, see tax codes for other
+      lines in the same move and try to match entire tax. If matched exactly
+      with one tax, we can have 2 cases:
+
+       * The move line has debit/credit: then we just put the tax as base.
+       * It's a dummy line introduced for adding another base tax code, due to
+         the restriction of <v8 of only one tax code per line. We locate the
+         first line in the same move with the same amount in debit or credit
+         column that doesn't have this tax already as base tax.
+
+    * If still no success, then we make a last try searching only for active
+      taxes to see if this way we match only one record.
+    """
+    env.cr.execute(
+        "SELECT tax_code_id FROM account_move_line GROUP BY tax_code_id"
+    )
+    deferred_base_tax_code_ids = []
+    for row in env.cr.fetchall():
+        tax_code_id = row[0]
+        # TAX AMOUNT
+        env.cr.execute(
+            """SELECT COUNT(*), MAX(id) FROM account_tax
+            WHERE tax_code_id=%(tax_code_id)s
+            OR ref_tax_code_id=%(tax_code_id)s""",
+            {'tax_code_id': tax_code_id},
+        )
+        row_tax = env.cr.fetchone()
+        if row_tax[0] == 1:
+            openupgrade.logged_query(
+                env.cr,
+                """UPDATE account_move_line
+                SET tax_line_id = %s
+                WHERE tax_code_id = %s""", (row_tax[1], tax_code_id)
+            )
+        elif row_tax[0] > 1:
+            # Try to match by tax name (put on the description of the line)
+            env.cr.execute(
+                """SELECT name
+                FROM account_move_line
+                WHERE tax_code_id = %s
+                GROUP BY name""", (tax_code_id, )
+            )
+            for row_name in env.cr.fetchall():
+                # Look for a match also on translated terms
+                env.cr.execute(
+                    """SELECT COUNT(DISTINCT(t.id)), MAX(t.id)
+                    FROM account_tax t
+                    LEFT JOIN ir_translation tr
+                    ON tr.name='account.tax,name' AND tr.res_id = t.id
+                    WHERE (
+                        t.tax_code_id = %(tax_code_id)s OR
+                        t.ref_tax_code_id = %(tax_code_id)s
+                    )
+                    AND (
+                        t.name = %(name)s OR
+                        tr.value = %(name)s
+                    )""", {
+                        'tax_code_id': tax_code_id,
+                        'name': row_name[0],
+                    },
+                )
+                row_tax = env.cr.fetchone()
+                if row_tax[0] == 1:
+                    openupgrade.logged_query(
+                        env.cr,
+                        """UPDATE account_move_line
+                        SET tax_line_id = %s
+                        WHERE tax_code_id = %s
+                        AND name = %s
+                        """, (row_tax[1], tax_code_id, row_name[0])
+                    )
+        # BASE AMOUNT
+        env.cr.execute(
+            """SELECT COUNT(*), MAX(id) FROM account_tax
+            WHERE base_code_id=%(tax_code_id)s OR
+            ref_base_code_id=%(tax_code_id)s
+            """, {'tax_code_id': tax_code_id},
+        )
+        row_base = env.cr.fetchone()
+        if row_base[0] == 1:
+            env.cr.execute(
+                """SELECT id, tax_amount
+                FROM account_move_line
+                WHERE tax_code_id=%s""", (tax_code_id,),
+            )
+            line_rows = env.cr.fetchall()
+            tax_amounts = dict(line_rows)
+            amls = env['account.move.line'].browse(tax_amounts.keys())
+            _fill_aml_tax_line_ids(env, amls, row_base[1], tax_amounts)
+        elif row_base[0] > 1:
+            # Let complete all the tax fee codes before doing the rest of the
+            # heuristics, as it depends on them
+            deferred_base_tax_code_ids.append(tax_code_id)
+    for tax_code_id in deferred_base_tax_code_ids:
+        env.cr.execute(
+            """SELECT id, tax_amount
+            FROM account_move_line
+            WHERE tax_code_id=%s""", (tax_code_id, ),
+        )
+        line_rows = env.cr.fetchall()
+        tax_amounts = dict(line_rows)
+        amls = env['account.move.line'].browse(tax_amounts.keys())
+        # Match base tax using the already assigned tax fees
+        matched = False
+        for line in amls:
+            env.cr.execute(
+                """SELECT tax_line_id
+                FROM account_move_line
+                WHERE move_id = %s""", (line.move_id.id, ),
+            )
+            fee_tax_ids = [x[0] for x in env.cr.fetchall() if x[0]]
+            if fee_tax_ids:
+                env.cr.execute(
+                    """SELECT COUNT(*), MAX(id) FROM account_tax
+                    WHERE (
+                       base_code_id=%(tax_code_id)s OR
+                       ref_base_code_id=%(tax_code_id)s
+                    ) AND id IN %(tax_ids)s
+                    """, {
+                        'tax_code_id': tax_code_id,
+                        'tax_ids': tuple(fee_tax_ids),
+                    },
+                )
+                row_base = env.cr.fetchone()
+                if row_base[0] == 1:
+                    matched = True
+                    _fill_aml_tax_line_ids(env, line, row_base[1], tax_amounts)
+        if not matched:
+            # Try with only active taxes
+            env.cr.execute(
+                """SELECT COUNT(*), MAX(id) FROM account_tax
+                WHERE (
+                    base_code_id=%(tax_code_id)s OR
+                    ref_base_code_id=%(tax_code_id)s
+                ) AND active=True
+                """, {'tax_code_id': tax_code_id},
+            )
+            row_base = env.cr.fetchone()
+            if row_base[0] == 1:
+                _fill_aml_tax_line_ids(env, amls, row_base[1], tax_amounts)
+
+
+def fill_account_invoice_tax_taxes(env, manual_tax_code_mapping=None):
+    """Fill tax_id field from old base_code_id and tax_code_id fields from v8.
+
+    This method can be called several times from other migration scripts, as it
+    doesn't overwrite lines already filled, and it's intended to be used by
+    other migration scripts, mostly localization modules (l10n_*) that needs
+    to adjust mapping, for example if there has been several tax changes across
+    time. There's a parameter for that purpose.
+
+    :param: manual_tax_code_mapping: List of tuples for indicating mappings
+      from old tax codes (first element of the tuple) to newest ones (second
+      element).
+    """
+    if manual_tax_code_mapping is None:
+        manual_tax_code_mapping = []
+    env.cr.execute(
+        """SELECT base_code_id, tax_code_id
+        FROM account_invoice_tax
+        WHERE tax_id IS NULL
+        GROUP BY base_code_id, tax_code_id"""
+    )
+    for row in env.cr.fetchall():
+        base_code_id = row[0]
+        tax_code_id = row[1]
+        _fill_account_invoice_tax_taxes_recursive(
+            env, base_code_id, tax_code_id,
+            manual_tax_code_mapping=manual_tax_code_mapping,
+        )
+
+
+def _fill_account_invoice_tax_taxes_recursive(env, base_code_id, tax_code_id,
+                                              original_base_code_id=0,
+                                              original_tax_code_id=0,
+                                              bypass_exact_match=False,
+                                              manual_tax_code_mapping=None):
+    """This makes the dirty work of filling taxes or calling itself with
+    other parameters.
+
+    Method followed
+    ===============
+
+    * If both codes are present in only one tax, then we can safely fill
+      tax_id with that tax.
+    * If there are more than one tax with that tax codes, try to match tax
+      with the name of the tax line.
+    * If still no single match, try to match only with active taxes.
+    * Finally, if there is no match, see if there's any tax code manual mapping
+      for starting again the matching.
+    """
+    if not original_base_code_id:
+        original_base_code_id = base_code_id
+    if not original_tax_code_id:
+        original_tax_code_id = tax_code_id
+    # Using `IS NOT DISTINCT FROM` for avoiding problems with NULL values
+    env.cr.execute(
+        """SELECT COUNT(*), MAX(id) FROM account_tax
+        WHERE (
+            base_code_id IS NOT DISTINCT FROM %(base_code_id)s AND
+            tax_code_id IS NOT DISTINCT FROM %(tax_code_id)s
+        ) OR (
+            ref_base_code_id IS NOT DISTINCT FROM %(base_code_id)s AND
+            ref_tax_code_id IS NOT DISTINCT FROM %(tax_code_id)s
+        )""", {
+            'base_code_id': base_code_id or AsIs('NULL'),
+            'tax_code_id': tax_code_id or AsIs('NULL'),
+        },
+    )
+    row_tax = env.cr.fetchone()
+    if row_tax[0] == 1 and not bypass_exact_match:
+        # EXACT MATCH
+        openupgrade.logged_query(
+            env.cr,
+            """UPDATE account_invoice_tax
+            SET tax_id = %s
+            WHERE base_code_id IS NOT DISTINCT FROM %s
+            AND tax_code_id IS NOT DISTINCT FROM %s
+            AND tax_id IS NULL""", (
+                row_tax[1],
+                original_base_code_id or AsIs('NULL'),
+                original_tax_code_id or AsIs('NULL'),
+            )
+        )
+    elif row_tax[0] > 1 or bypass_exact_match:
+        # MULTIPLE MATCHES - SEARCH BY NAME
+        env.cr.execute(
+            """SELECT name, company_id
+            FROM account_invoice_tax
+            WHERE base_code_id = %s AND tax_code_id = %s AND tax_id IS NULL
+            GROUP BY name, company_id
+            """, (
+                original_base_code_id,
+                original_tax_code_id,
+            )
+        )
+        for row_name in env.cr.fetchall():
+            # Make 2 passes - The second one only considering active taxes
+            for i in range(2):
+                # Look for a match also on translated terms
+                query = """
+                    SELECT COUNT(DISTINCT(t.id)), MAX(t.id)
+                    FROM account_tax t
+                    LEFT JOIN ir_translation tr
+                    ON tr.name='account.tax,name' AND tr.res_id = t.id
+                    WHERE (
+                        base_code_id IS NOT DISTINCT FROM %(base_code_id)s AND
+                        tax_code_id IS NOT DISTINCT FROM %(tax_code_id)s
+                    ) OR (
+                        ref_base_code_id IS NOT DISTINCT FROM %(base_code_id)s
+                        AND
+                        ref_tax_code_id IS NOT DISTINCT FROM %(tax_code_id)s
+                    )
+                    AND t.company_id = %(company_id)s
+                    AND (
+                        t.name = %(name)s OR
+                        tr.value = %(name)s
+                    )"""
+                if i == 1:
+                    query += " AND t.active"
+                env.cr.execute(
+                    query, {
+                        'base_code_id': base_code_id or AsIs('NULL'),
+                        'tax_code_id': tax_code_id or AsIs('NULL'),
+                        'name': row_name[0],
+                        'company_id': row_name[1],
+                    },
+                )
+                row_tax = env.cr.fetchone()
+                if row_tax[0] == 1:
+                    openupgrade.logged_query(
+                        env.cr,
+                        """UPDATE account_invoice_tax
+                        SET tax_id = %s
+                        WHERE base_code_id IS NOT DISTINCT FROM %s
+                        AND tax_code_id IS NOT DISTINCT FROM %s
+                        AND name = %s
+                        AND company_id = %s
+                        AND tax_id IS NULL
+                        """, (
+                            row_tax[1],
+                            original_base_code_id or AsIs('NULL'),
+                            original_tax_code_id or AsIs('NULL'),
+                            row_name[0],
+                            row_name[1],
+                        )
+                    )
+                    break
+    else:
+        # NO MATCH - TRY TO MAKE REPLACEMENT
+        query_name = "SELECT name FROM account_tax_group WHERE id = %s"
+        query_id = "SELECT id FROM account_tax_group WHERE name = %s"
+        env.cr.execute(query_name, (base_code_id,))
+        base_row = env.cr.fetchone()
+        env.cr.execute(query_name, (tax_code_id,))
+        tax_row = env.cr.fetchone()
+        if not base_row or not tax_row:
+            return
+        base_code_name = base_row[0]
+        tax_code_name = tax_row[0]
+        # This allows to search also when only tax code name is mapped, but
+        # base code name is not mapped
+        mappings = [(False, False)] + manual_tax_code_mapping
+        for old_base_name, new_base_name in mappings:
+            # Look for mapping for base codes
+            if old_base_name and old_base_name != base_code_name:
+                continue
+            if old_base_name:
+                env.cr.execute(query_id, (new_base_name, ))
+                row_base = env.cr.fetchone()
+                if not row_base:
+                    continue
+            else:
+                row_base = [base_code_id]
+            second_match = False
+            for old_tax_name, new_tax_name in manual_tax_code_mapping:
+                if old_tax_name != tax_code_name:
+                    continue
+                second_match = True
+                env.cr.execute(query_id, (new_tax_name, ))
+                row_tax = env.cr.fetchone()
+                if not row_tax:
+                    continue
+                _fill_account_invoice_tax_taxes_recursive(
+                    env, row_base[0], row_tax[0],
+                    original_base_code_id=base_code_id,
+                    original_tax_code_id=tax_code_id,
+                    bypass_exact_match=True,
+                    manual_tax_code_mapping=manual_tax_code_mapping,
+                )
+            if not second_match and new_base_name:
+                _fill_account_invoice_tax_taxes_recursive(
+                    env, row_base[0], tax_code_id,
+                    original_base_code_id=base_code_id,
+                    original_tax_code_id=tax_code_id,
+                    bypass_exact_match=True,
+                    manual_tax_code_mapping=manual_tax_code_mapping,
+                )
 
 
 def fill_blacklisted_fields(cr):
@@ -452,8 +921,8 @@ def fill_blacklisted_fields(cr):
                 ail.price_subtotal,
                 (CASE
                     WHEN ai.type IN ('in_refund', 'out_refund')
-                    THEN ROUND(-ail.price_subtotal * er.effective_rate, 2)
-                    ELSE ROUND(ail.price_subtotal  * er.effective_rate, 2)
+                    THEN ROUND(-ail.price_subtotal / er.effective_rate, 2)
+                    ELSE ROUND(ail.price_subtotal  / er.effective_rate, 2)
                 END) AS price_subtotal_signed,
                 ai.currency_id AS currency_id
             FROM account_invoice_line ail
@@ -497,6 +966,171 @@ def fill_move_line_invoice(cr):
     )
 
 
+def merge_invoice_journals(env, refund_journal_ids=None, journal_mapping=None):
+    """Move invoices and entries from refund journals to normal ones.
+
+    It can be used by other modules to complement this basic merging using
+    the extra provided arguments.
+
+    :param env: Odoo environment
+    :param refund_journal_ids: Restrict the journals to merge to the passed
+      ones.
+    :param journal_mapping: Optional dictionary with refund journal IDs as keys
+      and corresponding normal journal IDs as values for mapping the journals
+      when there's no easy correspondence.
+    """
+    cr = env.cr
+    journal_type_mapping = {
+        'sale_refund': 'sale',
+        'purchase_refund': 'purchase',
+    }
+    if journal_mapping is None:
+        journal_mapping = {}
+    # Add a column for storing target journal
+    support_column = openupgrade.get_legacy_name('merged_journal_id')
+    if not openupgrade.column_exists(cr, 'account_journal', support_column):
+        openupgrade.logged_query(
+            cr, "ALTER TABLE account_journal ADD %s INTEGER" % support_column,
+        )
+    for journal_type, new_journal_type in journal_type_mapping.iteritems():
+        query = """
+            SELECT id
+            FROM account_journal
+            WHERE %s = %%s
+            """ % openupgrade.get_legacy_name('type')
+        query_args = [journal_type, ]
+        if refund_journal_ids:
+            query += " AND id IN %s"
+            query_args.append(tuple(refund_journal_ids))
+        env.cr.execute(query, tuple(query_args))
+        ids = [x[0] for x in env.cr.fetchall()]
+        refund_journals = env['account.journal'].browse(ids)
+        for refund_journal in refund_journals:
+            if journal_mapping.get(refund_journal.id):
+                normal_journal = env['account.journal'].browse(
+                    journal_mapping[refund_journal.id]
+                )
+            else:
+                normal_journal = env['account.journal'].search([
+                    ('company_id', '=', refund_journal.company_id.id),
+                    ('type', '=', new_journal_type),
+                    ('id', '!=', refund_journal.id),
+                ])
+            # Is there only 1 'normal' journal for this company to move to?
+            if len(normal_journal) > 1:
+                continue
+            # Change journal references for account objects
+            tables = [
+                'account_invoice',
+                'account_move',
+                'account_move_line',
+            ]
+            for table in tables:
+                openupgrade.logged_query(
+                    env.cr,
+                    """
+                    UPDATE %s
+                    SET journal_id = %%s
+                    WHERE journal_id = %%s
+                    """ % table,
+                    (normal_journal.id, refund_journal.id)
+                )
+            # for avoiding to be selected first when invoicing
+            refund_journal.write({
+                'show_on_dashboard': False,
+                'sequence': 99999,
+            })
+            # update target journal in merged refund journal
+            env.cr.execute(
+                """UPDATE account_journal
+                SET %s = %%s
+                WHERE id = %%s
+                """ % support_column,
+                (normal_journal.id, refund_journal.id)
+            )
+            if refund_journal.sequence_id != normal_journal.sequence_id:
+                # Fill refund sequence
+                normal_journal.write({
+                    'refund_sequence': True,
+                    'refund_sequence_id': refund_journal.sequence_id.id,
+                })
+
+
+def update_account_invoice_date(cr):
+    """Update invoice date from the period last date.
+
+    NOTE: Invoices without linked journal entry won't be updated because they
+    are supposed to be in draft or cancel state, so the date will be filled on
+    normal validation workflow.
+    """
+    # Invoices with journal entries whose dates are in the same period
+    openupgrade.logged_query(
+        cr,
+        """
+        UPDATE account_invoice ai
+        SET date = am.date
+        FROM account_period ap,
+             account_move am
+        WHERE am.period_id = ap.id
+            AND am.id = ai.move_id
+            AND ai.date IS NULL
+            AND am.date >= ap.date_start
+            AND am.date <= ap.date_stop"""
+    )
+    # Invoices with journal entries whose dates are outside of forced period
+    openupgrade.logged_query(
+        cr,
+        """
+        UPDATE account_invoice ai
+        SET date = ap.date_start
+        FROM account_period ap,
+             account_move am
+        WHERE am.period_id = ap.id
+            AND am.id = ai.move_id
+            AND ai.date IS NULL
+            AND (am.date < ap.date_start OR am.date > ap.date_stop)"""
+    )
+
+
+def update_move_date(cr):
+    """Update journal entries date when the date is not inside the indicated
+    period for respecting the accounting period on v9.
+    """
+    openupgrade.logged_query(
+        cr,
+        """
+        UPDATE account_move am
+        SET date = ap.date_start
+        FROM account_period ap
+        WHERE am.period_id = ap.id
+            AND (am.date < ap.date_start OR am.date > ap.date_stop)"""
+    )
+    # Synchronize move line dates afterwards
+    openupgrade.logged_query(
+        cr,
+        """
+        UPDATE account_move_line aml
+        SET date = am.date
+        FROM account_move am
+        WHERE am.id = aml.move_id
+            AND am.date != aml.date"""
+    )
+
+
+def fill_bank_accounts(cr):
+    """Fill new bank_account_id field on journals through the inverse
+    reference on the bank accounts.
+    """
+    openupgrade.logged_query(
+        cr, """
+        UPDATE account_journal aj
+        SET bank_account_id = rpb.id
+        FROM res_partner_bank rpb
+        WHERE aj.type = 'bank'
+        AND rpb.journal_id = aj.id"""
+    )
+
+
 @openupgrade.migrate(use_env=True)
 def migrate(env, version):
     cr = env.cr
@@ -504,6 +1138,7 @@ def migrate(env, version):
     map_type_tax_use(cr)
     map_type_tax_use_template(cr)
     map_journal_state(cr)
+    openupgrade_90.replace_account_types(env, account_type_map)
     account_templates(env)
     parent_id_to_m2m(cr)
     cashbox(cr)
@@ -522,10 +1157,10 @@ def migrate(env, version):
     UPDATE account_journal SET bank_statements_source = 'manual'
     """)
 
-    # Value 'percentage_of_total' => 'percentage'
+    # Value 'percentage_of_total' and 'percentage_of_balance' => 'percentage'
     cr.execute("""
     UPDATE account_operation_template SET amount_type = 'percentage'
-    WHERE amount_type = 'percentage_of_total'
+    WHERE amount_type in ('percentage_of_total', 'percentage_of_balance')
     """)
 
     # Set up anglosaxon accounting
@@ -536,7 +1171,7 @@ def migrate(env, version):
 
     # deprecate accounts where active is False
     cr.execute("""
-    UPDATE account_account SET deprecated = True WHERE active = False
+    UPDATE account_account SET deprecated = (active IS FALSE);
     """)
 
     # Set display_on_footer to False
@@ -581,10 +1216,21 @@ def migrate(env, version):
 
     parent_id_to_tag(env, 'account.tax')
     parent_id_to_tag(env, 'account.account', recursive=True)
+    move_view_accounts(env)
     account_internal_type(env)
     map_account_tax_type(cr)
     map_account_tax_template_type(cr)
+    migrate_account_sequence_fiscalyear(cr)
     migrate_account_auto_fy_sequence(env)
+    fill_move_taxes(env)
+    fill_account_invoice_tax_taxes(env)
     fill_blacklisted_fields(cr)
     reset_blacklist_field_recomputation()
     fill_move_line_invoice(cr)
+    merge_invoice_journals(env)
+    update_account_invoice_date(cr)
+    update_move_date(cr)
+    fill_bank_accounts(cr)
+    openupgrade.load_data(
+        cr, 'account', 'migrations/9.0.1.1/noupdate_changes.xml',
+    )

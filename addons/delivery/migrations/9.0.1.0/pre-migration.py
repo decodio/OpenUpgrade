@@ -7,8 +7,6 @@ from openupgradelib import openupgrade
 
 column_renames = {
     'delivery_grid_line': [
-        ('type', 'variable'),
-        ('grid_id', 'carrier_id'),
         ('price_type', None),
     ],
     'delivery_grid': [
@@ -21,6 +19,11 @@ column_renames = {
         ('grid_id', 'carrier_id'),
     ],
 }
+
+field_renames = [
+    ('delivery.grid.line', 'delivery_grid_line', 'type', 'variable'),
+    ('delivery.grid.line', 'delivery_grid_line', 'grid_id', 'carrier_id'),
+]
 
 column_copies = {
     'delivery_grid_line': [
@@ -80,11 +83,60 @@ def correct_rule_prices(cr):
     )
 
 
-@openupgrade.migrate()
-def migrate(cr, version):
+def fill_missing_delivery_grid_records(cr):
+    """Add records for delivery carriers without grid for keeping integrity."""
+    openupgrade.logged_query(
+        cr, """
+        INSERT INTO delivery_grid
+        (create_uid, create_date, name, sequence, carrier_id,
+         write_uid, active, write_date)
+        SELECT
+            dc.create_uid, dc.create_date, dc.name, 1, dc.id,
+            dc.write_uid, dc.active, dc.write_date
+        FROM delivery_carrier dc
+        LEFT JOIN delivery_grid dg ON dg.carrier_id = dc.id
+        WHERE dg.id IS NULL"""
+    )
+
+
+def create_delivery_products(env):
+    """As now delivery.carrier inherits by delegation from product.product,
+    we need to create a specific product for each carrier, independently from
+    the previous product that was assigned. If not, things like the carrier
+    name will be taken from old product name, carriers will share products...
+
+    To be executed before the renaming, but after filling missing grids.
+    """
+    # Pre-create product_id column
+    env.cr.execute("ALTER TABLE delivery_grid ADD product_id INTEGER")
+    # Add a product per carrier
+    env.cr.execute(
+        """SELECT dg.id, dc.name, dg.name
+        FROM delivery_carrier dc, delivery_grid dg
+        WHERE dc.id = dg.carrier_id"""
+    )
+    Product = env['product.product']
+    for row in env.cr.fetchall():
+        product = Product.create({
+            'name': row[1] + ": " + row[2],
+            'type': 'service',
+        })
+        env.cr.execute(
+            "UPDATE delivery_grid SET product_id=%s WHERE id=%s",
+            (product.id, row[0]),
+        )
+
+
+@openupgrade.migrate(use_env=True)
+def migrate(env, version):
+    cr = env.cr
+    fill_missing_delivery_grid_records(cr)
+    create_delivery_products(env)
     correct_object_references(cr)
     openupgrade.rename_columns(cr, column_renames)
+    openupgrade.rename_fields(env, field_renames)
     correct_rule_prices(cr)
     openupgrade.rename_tables(cr, table_renames)
-    # TODO: if the same product is used for multiple carriers, duplicate it
-    # for having a correct structure of 1 product = 1 carrier
+    openupgrade.rename_property(
+        cr,'res.partner', 'property_delivery_carrier',
+        'property_delivery_carrier_id')

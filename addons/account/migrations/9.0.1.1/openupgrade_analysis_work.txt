@@ -233,8 +233,7 @@ account      / account.invoice.tax      / tax_amount (float)            : DEL
 
 account      / account.invoice.tax      / tax_code_id (many2one)        : DEL relation: account.tax.code
 account      / account.invoice.tax      / tax_id (many2one)             : NEW relation: account.tax
-# TODO: A mapping function should provide the transition from tax_code_ids to tax_ids. 
-  Use this function to get the new tax_id from the old tax_code_id.
+# Done: Post-migration - A function tries to infer the mapping from tax codes to taxes
 
 
 #### FIELDS IN MODEL ACCOUNT.JOURNAL ####
@@ -246,6 +245,7 @@ account      / account.journal          / allow_date (boolean)          : DEL
 account      / account.journal          / analytic_journal_id (many2one): DEL relation: account.analytic.journal
 
 account      / account.journal          / bank_account_id (many2one)    : NEW relation: res.partner.bank
+# Done: Fill this value through the journal_id field in res.partner.bank
 
 account      / account.journal          / bank_statements_source (selection): NEW selection_keys: ['manual']
 # Post migration script: Default to 'manual'
@@ -434,6 +434,7 @@ account      / account.payment.term.line / days2 (integer)               : DEL r
 account      / account.payment.term.line / option (selection)            : NEW required: required, selection_keys: ['day_after_invoice_date', 'fix_day_following_month', 'last_day_current_month', 'last_day_following_month'], req_default: day_after_invoice_date
 account      / account.payment.term.line / sequence (integer)            : NEW 
 account      / account.payment.term.line / value (selection)             : selection_keys is now '['balance', 'fixed', 'percent']' ('['balance', 'fixed', 'procent']')
+# Done: rewrote 'procent' entries to 'percent'
 
 
 #### FIELDS IN MODEL ACCOUNT.TAX ####
@@ -473,6 +474,7 @@ account      / account.tax              / type (selection)              : was re
 account      / account.tax              / type (selection)              : selection_keys is now '['division', 'fixed', 'group', 'percent']' ('['balance', 'code', 'fixed', 'none', 'percent']')
 # Done: pre-migration: If the selection was 'code', rename to 'group' and install 'account_tax_python'
 # Done: post-migration: If the selection was 'code', rename again from 'group' to 'code'
+# Done: pre-migration: Switch type='none' to type='percent' + amount=0.0
 
 
 # Post migration script: In v8, if child_depend == True, then in v9, amount_type='group'
@@ -545,6 +547,7 @@ account      / account.tax.template     / type_tax_use (selection)      : select
 #### FIELDS IN MODEL IR.SEQUENCE ####
 
 account      / ir.sequence              / fiscal_ids (one2many)         : DEL relation: account.sequence.fiscalyear
+# DONE: migrated fiscal year sequences to date ranges
 
 #### FIELDS IN MODEL PRODUCT.CATEGORY ####
 account      / product.category         / property_account_expense_categ (many2one): was renamed to property_account_expense_categ_id [nothing to to]
@@ -663,12 +666,15 @@ DEL account.account.type: account.data_account_type_income
 NEW account.account.type: account.data_account_type_revenue
 DEL account.account.type: account.data_account_type_bank
 NEW account.account.type: account.data_account_type_liquidity
-
+DEL account.account.type: account.data_account_type_asset
 NEW account.account.type: account.data_account_type_current_assets
+DEL account.account.type: account.data_account_type_liability
 NEW account.account.type: account.data_account_type_current_liabilities
+DEL account.account.type: account.data_account_type_expense
+NEW account.account.type: account.data_account_type_expenses
+
 NEW account.account.type: account.data_account_type_depreciation
 NEW account.account.type: account.data_account_type_direct_costs
-NEW account.account.type: account.data_account_type_expenses
 NEW account.account.type: account.data_account_type_fixed_assets
 NEW account.account.type: account.data_account_type_non_current_assets
 NEW account.account.type: account.data_account_type_non_current_liabilities
@@ -679,13 +685,13 @@ DEL account.account.type: account.account_type_asset_view1
 DEL account.account.type: account.account_type_expense_view1
 DEL account.account.type: account.account_type_income_view1
 DEL account.account.type: account.account_type_liability_view1
+DEL account.account.type: account.data_account_type_view
+
+# Merge into some of the new account types
 DEL account.account.type: account.conf_account_type_chk
 DEL account.account.type: account.conf_account_type_tax
-DEL account.account.type: account.data_account_type_asset
 DEL account.account.type: account.data_account_type_cash
-DEL account.account.type: account.data_account_type_expense
-DEL account.account.type: account.data_account_type_liability
-DEL account.account.type: account.data_account_type_view
+
 DEL account.analytic.journal: account.analytic_journal_sale
 DEL account.analytic.journal: account.exp
 DEL account.chart.template: account.configurable_chart_template

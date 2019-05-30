@@ -19,22 +19,11 @@ column_copies = {
     ]
 }
 
-column_renames = {
-    'res_partner_bank': [
-        ('bank', 'bank_id'),
-    ],
-    'res_partner': [
-        ('image', None),
-        ('image_medium', None),
-        ('image_small', None),
-    ],
-    'res_country': [
-        ('image', None),
-    ],
-    'ir_ui_menu': [
-        ('web_icon_data', None),
-    ],
-}
+field_renames = [
+    ('res.partner.bank', 'res_partner_bank', 'bank', 'bank_id'),
+    # renamings with oldname attribute - They also need the rest of operations
+    ('res.partner', 'res_partner', 'ean13', 'barcode'),
+]
 
 
 OBSOLETE_RULES = (
@@ -56,53 +45,7 @@ def cleanup_modules(cr):
     """Don't report as missing these modules, as they are integrated in
     other modules."""
     openupgrade.update_module_names(
-        cr, [
-            ('contacts', 'mail'),
-            ('marketing_crm', 'crm'),
-            ('email_template', 'mail'),  # mail_template class
-            ('procurement_jit_stock', 'procurement_jit'),
-            ('web_gantt', 'web'),
-            ('web_graph', 'web'),
-            ('web_kanban_sparkline', 'web'),
-            ('web_tests', 'web'),
-            ('website_report', 'report'),
-            # from OCA/account-financial-tools - Features changed
-            ('account_move_line_no_default_search', 'account'),
-            ('account_tax_chart_interval', 'account'),
-            # from OCA/account-financial-reporting
-            ('account_financial_report_webkit_xls',
-             'account_financial_report_qweb'),
-            # from OCA/account_payment
-            ('account_payment_term_multi_day',
-             'account_payment_term_extension'),
-            # from OCA/bank-statement-reconcile
-            ('account_easy_reconcile', 'account_mass_reconcile'),
-            ('account_advanced_reconcile', 'account_mass_reconcile'),
-            # from OCA/connector-telephony
-            ('asterisk_click2dial_crm', 'crm_phone'),
-            # from OCA/server-tools - features included now in core
-            ('base_concurrency', 'base'),
-            ('base_debug4all', 'base'),
-            ('cron_run_manually', 'base'),
-            ('shell', 'base'),
-            # from OCA/social - included in core
-            ('website_mail_snippet_table_edit', 'mass_mailing'),
-            ('mass_mailing_sending_queue', 'mass_mailing'),
-            ('website_mail_snippet_bg_color',
-             'web_editor_background_color'), # this one now located in OCA/web
-            # from OCA/crm - included in core
-            ('crm_lead_lost_reason', 'crm'),
-            # from OCA/sale-workflow - included in core
-            ('sale_order_back2draft', 'sale'),
-            ('partner_prepayment', 'sale_delivery_block'),
-            ('sale_fiscal_position_update', 'sale'),
-            # from OCA/bank-payment
-            ('account_payment_sale_stock', 'account_payment_sale'),
-            # from OCA/website
-            ('website_event_register_free', 'website_event'),
-            ('website_event_register_free_with_sale', 'website_event_sale'),
-            ('website_sale_collapse_categories', 'website_sale'),
-        ], merge_modules=True,
+        cr, apriori.merged_modules, merge_modules=True,
     )
 
 
@@ -117,43 +60,62 @@ def map_res_partner_type(cr):
         table='res_partner', write='sql')
 
 
-@openupgrade.migrate()
-def migrate(cr, version):
-    create_backup_schema(cr)
+def has_recurring_contracts(cr):
+    """ Whether or not to migrate to the contract module """
+    if openupgrade.column_exists(
+            cr, 'account_analytic_account', 'recurring_invoices'):
+        cr.execute(
+            """SELECT id FROM account_analytic_account
+            WHERE recurring_invoices LIMIT 1""")
+        if cr.fetchone():
+            return True
+    return False
+
+
+def migrate_translations(cr):
+    """ Translations of field names are encoded differently in Odoo 9.0:
+     version |           name                    | res_id |  type
+    ---------+-----------------------------------+--------+-------
+     8.0     | ir.module.module,summary          |      0 | field
+     9.0     | ir.model.fields,field_description |    759 | model
+    """
+    openupgrade.logged_query(
+        cr, """
+        WITH mapping AS (
+            SELECT imd.module,
+                imf.model||','||imf.name AS name80,
+                'ir.model.fields,field_description' AS name90,
+                imd.res_id
+            FROM ir_model_data imd
+            JOIN ir_model_fields imf ON imf.id = imd.res_id
+            WHERE imd.model = 'ir.model.fields' ORDER BY imd.id DESC)
+        UPDATE ir_translation
+        SET name = mapping.name90, type = 'model', res_id = mapping.res_id
+        FROM mapping
+        WHERE name = mapping.name80
+            AND type = 'field'
+            AND (ir_translation.module = mapping.module
+                 OR ir_translation.module IS NULL); """)
+
+
+@openupgrade.migrate(use_env=True)
+def migrate(env, version):
+    cr = env.cr
+    module_renames = dict(apriori.renamed_modules)
+    if not has_recurring_contracts(cr):
+        # Don't install contract module without any recurring invoicing
+        del module_renames['account_analytic_analysis']
     openupgrade.update_module_names(
-        cr, apriori.renamed_modules.iteritems()
+        cr, module_renames.iteritems()
     )
     openupgrade.copy_columns(cr, column_copies)
-    openupgrade.rename_columns(cr, column_renames)
+    openupgrade.rename_fields(env, field_renames, no_deep=True)
     remove_obsolete(cr)
     pre_create_columns(cr)
     cleanup_modules(cr)
     map_res_partner_type(cr)
+    migrate_translations(env.cr)
 
-
-def create_backup_schema(cr):
-    cr.execute("""
-        CREATE SCHEMA v8_data;
-        """)
-    cr.execute("""
-        DO $body$ 
-        DECLARE 
-          r RECORD;BEGIN 
-          FOR r   IN 
-          SELECT   * 
-          FROM     information_schema.TABLES 
-          WHERE    table_schema = 'public' 
-          AND      table_type = 'BASE TABLE' 
-          ORDER BY table_name
-          LOOP 
-               EXECUTE 'CREATE TABLE v8_data.v8_' 
-                        || quote_ident(r.table_name) 
-                        || ' AS SELECT * FROM public.' 
-                        || quote_ident(r.table_name) 
-                        || ';'; 
-          END LOOP; 
-        END $body$;
-        """)
 
 def pre_create_columns(cr):
     openupgrade.logged_query(cr, """

@@ -384,6 +384,13 @@ class ir_model_fields(osv.osv):
     def _onchange_ttype(self):
         self.copy = (self.ttype != 'one2many')
         if self.ttype == 'many2many' and self.model_id and self.relation:
+            if self.relation not in self.env:
+                return {
+                    'warning': {
+                        'title': _('Model %s does not exist') % self.relation,
+                        'message': _('Please specify a valid model for the object relation'),
+                    }
+                }
             names = self._custom_many2many_names(self.model_id.model, self.relation)
             self.relation_table, self.column1, self.column2 = names
         else:
@@ -433,7 +440,8 @@ class ir_model_fields(osv.osv):
             if field.state == 'manual' and field.ttype == 'many2many':
                 rel_name = field.relation_table or model._fields[field.name].relation
                 tables_to_drop.add(rel_name)
-            model._pop_field(cr, uid, field.name, context=context)
+            if field.state == 'manual':
+                model._pop_field(cr, uid, field.name, context=context)
 
         if tables_to_drop:
             # drop the relation tables that are not used by other fields
@@ -1235,6 +1243,7 @@ class ir_model_data(osv.osv):
         to_unlink = []
         ids.sort()
         ids.reverse()
+        id_by_data = {}
         for data in self.browse(cr, uid, ids, context):
             model = data.model
             res_id = data.res_id
@@ -1242,6 +1251,7 @@ class ir_model_data(osv.osv):
             pair_to_unlink = (model, res_id)
             if pair_to_unlink not in to_unlink:
                 to_unlink.append(pair_to_unlink)
+                id_by_data[pair_to_unlink] = data['id']
 
             if model == 'workflow.activity':
                 # Special treatment for workflow activities: temporarily revert their
@@ -1286,6 +1296,7 @@ class ir_model_data(osv.osv):
                     self.pool[model].unlink(cr, uid, [res_id], context=context)
                 except Exception:
                     _logger.info('Unable to delete %s@%s', res_id, model, exc_info=True)
+                    ids.remove(id_by_data[(model, res_id)])
                     cr.execute('ROLLBACK TO SAVEPOINT record_unlink_save')
                 else:
                     cr.execute('RELEASE SAVEPOINT record_unlink_save')

@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
-# @copyright 2016-Today: Odoo Community Association, Therp BV
+# Copyright 2016 - Therp BV
+# Copyright 2018 - Tecnativa - Pedro M. Baeza
 # License AGPL-3.0 or later (http://www.gnu.org/licenses/agpl.html).
 from psycopg2.extensions import AsIs
 from openerp import SUPERUSER_ID, api
@@ -30,24 +31,36 @@ def _migrate_tracking(cr):
 
 
 def _migrate_pack_operation(env):
+    """Create stock.pack.operation.lot records - non existing in v8 -,
+    mark pickings that need to recreate pack operations, and update new field
+    qty_done on stock.pack.operation for transferred pickings.
+    """
     env.cr.execute(
-        "select o.id, o.%(lot_id)s, p.state, sum(q.qty) "
+        "select o.id, o.%(lot_id)s, p.state, o.qty_done "
         "from stock_pack_operation o "
-        "join stock_quant q on q.lot_id=o.%(lot_id)s "
         "join stock_picking p on o.picking_id=p.id "
-        "group by o.id, o.%(lot_id)s, p.state",
+        "where o.%(lot_id)s is not null "
+        "group by o.id, o.%(lot_id)s, p.state, o.qty_done",
         {'lot_id': AsIs(openupgrade.get_legacy_name('lot_id'))})
-    for operation_id, lot_id, state, qty in env.cr.fetchall():
+    for operation_id, lot_id, state, qty_done in env.cr.fetchall():
         env['stock.pack.operation.lot'].create({
             'lot_id': lot_id,
             'operation_id': operation_id,
-            'qty': 0 if state not in ['done'] else qty,
-            'qty_todo': 0 if state in ['done'] else qty,
+            'qty': 0 if state not in ['done'] else qty_done,
+            'qty_todo': 0 if state in ['done'] else qty_done,
         })
     env.cr.execute(
         "update stock_pack_operation "
         "set fresh_record = (%(processed)s = 'false')",
         {'processed': AsIs(openupgrade.get_legacy_name('processed'))})
+    openupgrade.logged_query(
+        env.cr, """
+        UPDATE stock_pack_operation spo
+        SET qty_done = product_qty
+        FROM stock_picking p
+        WHERE p.id = spo.picking_id
+        AND p.state = 'done'"""
+    )
 
 
 def _migrate_stock_picking(cr):

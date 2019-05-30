@@ -11,6 +11,29 @@ from openerp.tools.float_utils import float_round, float_is_zero
 _logger = logging.getLogger(__name__)
 
 
+def assure_reconcile_ref_integrity(cr):
+    """Triggers for reconcile_ref have failed across v8 history, and there
+    are inconsistencies of journal items reconciled, but without reconcile
+    reference. With this, we assure that all are filled before migrating
+    the reconciles."""
+    openupgrade.logged_query(
+        cr,
+        """UPDATE account_move_line aml
+        SET reconcile_ref = amr.name
+        FROM account_move_reconcile amr
+        WHERE reconcile_ref IS NULL
+        AND aml.reconcile_id = amr.id;"""
+    )
+    openupgrade.logged_query(
+        cr,
+        """UPDATE account_move_line aml
+        SET reconcile_ref = amr.name
+        FROM account_move_reconcile amr
+        WHERE reconcile_ref IS NULL
+        AND aml.reconcile_partial_id = amr.id;"""
+    )
+
+
 def migrate_reconcile(cr):
     """Migrate account.move.reconcile to account.partial.reconcile and
     account.full.reconcile.
@@ -69,10 +92,15 @@ def migrate_reconcile(cr):
         currency_id = False
         rate = 1.0
         amount_currency = 0.0
-        if debit_record.line_currency_id and debit_record.amount_currency:
+        if debit_record.line_currency_id:
             currency_id = debit_record.line_currency_id
-            rate = abs(debit_record.balance / debit_record.amount_currency)
-            amount_currency = amount / rate
+            if debit_record.line_currency_id == credit_record.line_currency_id:
+                amount_currency = min(
+                    abs(debit_record.amount_residual_currency),
+                    abs(credit_record.amount_residual_currency))
+            elif debit_record.amount_currency:
+                rate = abs(debit_record.balance / debit_record.amount_currency)
+                amount_currency = amount / rate
         elif credit_record.line_currency_id and credit_record.amount_currency:
             currency_id = credit_record.line_currency_id
             rate = abs(credit_record.balance / credit_record.amount_currency)
@@ -481,5 +509,8 @@ def invoice_recompute(env):
 def migrate(env, version):
     """Thanks to no_version migration will be run on install as well."""
     cr = env.cr
+    if not openupgrade.table_exists(cr, 'account_move_reconcile'):
+        return  # This avoids errors when this module is installed on fresh DB
+    assure_reconcile_ref_integrity(cr)
     migrate_reconcile(cr)
     invoice_recompute(env)
