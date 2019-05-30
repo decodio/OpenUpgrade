@@ -38,10 +38,12 @@ def update_picking_type_id(env):
             SELECT id from stock_picking_type
             WHERE warehouse_id = %s AND
                 default_location_dest_id = %s AND
-                default_location_src_id = %s""" % (
-                procurement_rule.warehouse_id.id,
-                procurement_rule.location_id.id,
-                procurement_rule.location_src_id.id,
+                default_location_src_id = %s
+            """,
+            (
+                procurement_rule.warehouse_id.id or None,
+                procurement_rule.location_id.id or None,
+                procurement_rule.location_src_id.id or None,
             )
         )
         picking_type_ids = env.cr.fetchone()
@@ -152,3 +154,6 @@ def migrate(env, version):
     update_ordered_qty(cr)
     populate_stock_scrap(cr)
     assign_security_groups(env)
+    openupgrade.load_data(
+        cr, 'stock', 'migrations/10.0.1.1/noupdate_changes.xml',
+    )

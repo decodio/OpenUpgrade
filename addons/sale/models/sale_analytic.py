@@ -10,27 +10,20 @@ class SaleOrderLine(models.Model):
     @api.multi
     def _compute_analytic(self, domain=None):
         lines = {}
+        force_so_lines = self.env.context.get("force_so_lines")
         if not domain:
+            if not self.ids and not force_so_lines:
+                return True
             # To filter on analyic lines linked to an expense
             expense_type_id = self.env.ref('account.data_account_type_expenses', raise_if_not_found=False)
             expense_type_id = expense_type_id and expense_type_id.id
-            domain = [
-                ('so_line', 'in', self.ids),
-                '|',
-                    ('amount', '<', 0),
-                    '&',
-                        ('amount', '=', 0),
-                        '|',
-                            ('move_id', '=', False),
-                            ('move_id.account_id.user_type_id', '=', expense_type_id)
-            ]
+            domain = [('so_line', 'in', self.ids), ('amount', '<=', 0.0)]
 
         data = self.env['account.analytic.line'].read_group(
             domain,
             ['so_line', 'unit_amount', 'product_uom_id'], ['product_uom_id', 'so_line'], lazy=False
         )
         # If the unlinked analytic line was the last one on the SO line, the qty was not updated.
-        force_so_lines = self.env.context.get("force_so_lines")
         if force_so_lines:
             for line in force_so_lines:
                 lines.setdefault(line, 0.0)
@@ -41,7 +34,7 @@ class SaleOrderLine(models.Model):
             lines.setdefault(line, 0.0)
             uom = self.env['product.uom'].browse(d['product_uom_id'][0])
             if line.product_uom.category_id == uom.category_id:
-                qty = uom._compute_quantity(d['unit_amount'], line.product_uom)
+                qty = uom._compute_quantity(d['unit_amount'], line.product_uom, rounding_method='HALF-UP')
             else:
                 qty = d['unit_amount']
             lines[line] += qty
@@ -116,7 +109,11 @@ class AccountAnalyticLine(models.Model):
                 result.update({'so_line': so_lines[0].id})
             else:
                 if order.state != 'sale':
-                    raise UserError(_('The Sale Order %s linked to the Analytic Account must be validated before registering expenses.') % order.name)
+                    message_unconfirmed = _('The Sales Order %s linked to the Analytic Account %s must be validated before registering expenses.')
+                    messages = {'draft': message_unconfirmed, 'sent': message_unconfirmed,
+                                'done': _('The Sales Order %s linked to the Analytic Account %s is currently locked. You cannot register an expense on a locked Sales Order. Please create a new SO linked to this Analytic Account.'),
+                                'cancel': _('The Sales Order %s linked to the Analytic Account %s is cancelled. You cannot register an expense on a cancelled Sales Order.')}
+                    raise UserError(messages[order.state] % (order.name, self.account_id.name))
                 order_line_vals = self._get_sale_order_line_vals(order, price)
                 if order_line_vals:
                     so_line = self.env['sale.order.line'].create(order_line_vals)

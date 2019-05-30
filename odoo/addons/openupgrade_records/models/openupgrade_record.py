@@ -25,7 +25,7 @@ class Record(models.Model):
             [('create', 'Create'), ('modify', 'Modify')],
             help='Set to Create if a field is newly created '
             'in this module. If this module modifies an attribute of an '
-            'exting field, set to Modify.',
+            'existing field, set to Modify.',
             readonly=True)
     type = fields.Selection(  # Uh oh, reserved keyword
             [('field', 'Field'), ('xmlid', 'XML ID')],
@@ -33,10 +33,12 @@ class Record(models.Model):
     attribute_ids = fields.One2many(
             'openupgrade.attribute', 'record_id',
             readonly=True)
+    noupdate = fields.Boolean(readonly=True)
 
     @api.model
     def field_dump(self):
         keys = [
+            'attachment',
             'module',
             'mode',
             'model',

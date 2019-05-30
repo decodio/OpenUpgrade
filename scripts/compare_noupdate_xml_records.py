@@ -3,6 +3,7 @@
 # Copyright 2016 Opener B.V. <https://opener.am>
 # License AGPL-3.0 or later (http://www.gnu.org/licenses/agpl).
 
+from os.path import join as opj
 import argparse
 import ast
 import os
@@ -11,11 +12,11 @@ from lxml import etree
 
 
 def read_manifest(addon_dir):
-    for manifest in ('__manifest__.py', '__openerp__.py'):
-        path = os.path.join(addon_dir, manifest)
-        if os.path.isfile(path):
-            break
-    with open(path, 'r') as f:
+    # this script should be compatible with 9.0 and 10.0
+    manifest_name = '__openerp__.py'
+    if os.access(os.path.join(addon_dir, '__manifest__.py'), os.R_OK):
+        manifest_name = '__manifest__.py'
+    with open(os.path.join(addon_dir, manifest_name), 'r') as f:
         manifest_string = f.read()
     return ast.literal_eval(manifest_string)
 
@@ -74,29 +75,32 @@ def get_records(addon_dir):
     records_update = {}
     records_noupdate = {}
 
+    def process_record_node(record, noupdate):
+        xml_id = record.get("id")
+        if not xml_id:
+            return
+        if '.' in xml_id and xml_id.startswith(addon_name + '.'):
+            xml_id = xml_id[len(addon_name) + 1:]
+        for records in records_noupdate, records_update:
+            # records can occur multiple times in the same module
+            # with different noupdate settings
+            if xml_id in records:
+                # merge records (overwriting an existing element
+                # with the same tag). The order processing the
+                # various directives from the manifest is
+                # important here
+                update_node(records[xml_id], record)
+                break
+        else:
+            target_dict = (
+                records_noupdate if noupdate else records_update)
+            target_dict[xml_id] = record
+
     def process_data_node(data_node):
         noupdate = nodeattr2bool(data_node, 'noupdate', False)
         record_nodes = data_node.xpath("./record")
         for record in record_nodes:
-            xml_id = record.get("id")
-            if not xml_id:
-                continue
-            if '.' in xml_id and xml_id.startswith(addon_name + '.'):
-                xml_id = xml_id[len(addon_name) + 1:]
-            for records in records_noupdate, records_update:
-                # records can occur multiple times in the same module
-                # with different noupdate settings
-                if xml_id in records:
-                    # merge records (overwriting an existing element
-                    # with the same tag). The order processing the
-                    # various directives from the manifest is
-                    # important here
-                    update_node(records[xml_id], record)
-                    break
-            else:
-                target_dict = (
-                    records_noupdate if noupdate else records_update)
-                target_dict[xml_id] = record
+            process_record_node(record, noupdate)
 
     for key in keys:
         if not manifest.get(key):
@@ -104,48 +108,37 @@ def get_records(addon_dir):
         for xml_file in manifest[key]:
             xml_path = xml_file.split('/')
             try:
-                tree = etree.parse(os.path.join(addon_dir, *xml_path))
+                # This is for a final correct pretty print
+                # Ref.: https://stackoverflow.com/a/7904066
+                # Also don't strip CDATA tags as needed for HTML content
+                parser = etree.XMLParser(
+                    remove_blank_text=True, strip_cdata=False,
+                )
+                tree = etree.parse(os.path.join(addon_dir, *xml_path), parser)
             except etree.XMLSyntaxError:
                 continue
-            for data_node in tree.xpath("/openerp/data"):
-                process_data_node(data_node)
+            # Support xml files with root Element either odoo or openerp, supporting v9.0 and v10.0
+            # Condition: each xml file should have only one root element {<odoo>, <openerp> or —rarely— <data>};
+            root_node = tree.getroot()
+            root_node_noupdate = nodeattr2bool(root_node, 'noupdate', False)
+            if root_node.tag not in ('openerp', 'odoo', 'data'):
+                raise Exception(
+                    'Unexpected root Element: %s in file: %s' % (
+                        tree.getroot(), xml_path
+                    )
+                )
+            for node in root_node:
+                if node.tag == 'data':
+                    process_data_node(node)
+                elif node.tag == 'record':
+                    process_record_node(node, root_node_noupdate)
+
     return records_update, records_noupdate
 
 
-def main(argv=None):
-    """
-    Attempt to represent the differences in data records flagged with
-    'noupdate' between to different versions of the same OpenERP module.
+def main_analysis(old_update, old_noupdate, new_update, new_noupdate):
 
-    Print out a complete XML data file that can be loaded in a post-migration
-    script using openupgrade::load_xml().
-
-    Known issues:
-    - Does not detect if a deleted value belongs to a field
-      which has been removed.
-    - Ignores forcecreate=False. This hardly occurs, but you should
-      check manually for new data records with this tag. Note that
-      'True' is the default value for data elements without this tag.
-    - Does not take csv data into account (obviously)
-    - Is not able to check cross module data
-    - etree's pretty_print is not *that* pretty
-    - Does not take translations into account (e.g. in the case of
-      email templates)
-    - Does not handle the shorthand records <menu>, <act_window> etc.,
-      although that could be done using the same expansion logic as
-      is used in their parsers in openerp/tools/convert.py
-    """
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        'olddir', metavar='older_module_directory')
-    parser.add_argument(
-        'newdir', metavar='newer_module_directory')
-    arguments = parser.parse_args(argv)
-
-    old_update, old_noupdate = get_records(arguments.olddir)
-    new_update, new_noupdate = get_records(arguments.newdir)
-
-    data = etree.Element("data")
+    odoo = etree.Element("odoo")
 
     for xml_id, record_new in new_noupdate.items():
         record_old = None
@@ -159,6 +152,9 @@ def main(argv=None):
 
         element = etree.Element(
             "record", id=xml_id, model=record_new.attrib['model'])
+        # Add forcecreate attribute if exists
+        if record_new.attrib.get('forcecreate'):
+            element.attrib['forcecreate'] = record_new.attrib['forcecreate']
         record_old_dict = get_node_dict(record_old)
         record_new_dict = get_node_dict(record_new)
         for key in record_old_dict.keys():
@@ -185,14 +181,71 @@ def main(argv=None):
                 element.append(deepcopy(record_new_dict[key]))
 
         if len(element):
-            data.append(element)
+            odoo.append(element)
 
-    openerp = etree.Element("openerp")
-    openerp.append(data)
-    document = etree.ElementTree(openerp)
+    document = etree.ElementTree(odoo)
 
     print etree.tostring(
         document, pretty_print=True, xml_declaration=True, encoding='utf-8')
+
+
+def main(argv=None):
+    """
+    Attempt to represent the differences in data records flagged with
+    'noupdate' between two different versions of the same Odoo module or
+    repository.
+
+    Print out a complete XML data file that can be loaded in a post-migration
+    script using openupgrade::load_xml().
+
+        :param argv: arg1 (old) and arg2 (new) are the module o repository
+        path, and arg3 (mode) are the 'module' or 'repository' options.
+
+    Known issues:
+    - Does not detect if a deleted value belongs to a field
+      which has been removed.
+    - Does not take csv data into account (obviously)
+    - Is not able to check cross module data
+    - Does not take translations into account (e.g. in the case of
+      email templates)
+    - Does not handle the shorthand records <menu>, <act_window> etc.,
+      although that could be done using the same expansion logic as
+      is used in their parsers in openerp/tools/convert.py
+    """
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        'olddir', metavar='older_directory')
+    parser.add_argument(
+        'newdir', metavar='newer_directory')
+    parser.add_argument(
+        '--mode', metavar='module/repository', default='module')
+    arguments = parser.parse_args(argv)
+    print "\n"
+
+    if arguments.mode == "module":
+        print arguments.olddir.split('/')[-1] + ":\n"
+        old_update, old_noupdate = get_records(arguments.olddir)
+        new_update, new_noupdate = get_records(arguments.newdir)
+        main_analysis(old_update, old_noupdate, new_update, new_noupdate)
+
+    elif arguments.mode == "repository":
+        old_module_list, new_module_list = [], []
+        for mname in ('__manifest__.py', '__openerp__.py'):
+            old_module_list += filter(
+                lambda m: os.path.isfile(
+                    opj(arguments.olddir, m, mname)),
+                os.listdir(arguments.olddir))
+            new_module_list += filter(
+                lambda m: os.path.isfile(
+                    opj(arguments.newdir, m, mname)),
+                os.listdir(arguments.newdir))
+        for module_name in set(old_module_list).intersection(new_module_list):
+            print module_name + ":\n"
+            old_update, old_noupdate = get_records(
+                opj(arguments.olddir, module_name))
+            new_update, new_noupdate = get_records(
+                opj(arguments.newdir, module_name))
+            main_analysis(old_update, old_noupdate, new_update, new_noupdate)
 
 
 if __name__ == "__main__":

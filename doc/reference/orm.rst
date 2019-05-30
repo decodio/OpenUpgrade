@@ -45,14 +45,20 @@ Field access
 ------------
 
 Recordsets provide an "Active Record" interface: model fields can be read and
-written directly from the record, but only on singletons (single-record
-recordsets). Setting a field's value triggers an update to the database::
+written directly from the record as attributes, but only on singletons
+(single-record recordsets).
+Field values can also be accessed like dict items, which is more elegant and
+safer than ``getattr()`` for dynamic field names.
+Setting a field's value triggers an update to the database::
 
     >>> record.name
     Example Name
     >>> record.company_id.name
     Company Name
     >>> record.name = "Bob"
+    >>> field = "name"
+    >>> record[field]
+    Bob
 
 Trying to read or write a field on multiple records will raise an error.
 
@@ -624,6 +630,9 @@ Model Reference
 
         If set to ``False``, override :meth:`.init` to create the database
         table
+        
+     .. tip:: To create a model without any table, inherit
+              from ``odoo.models.AbstractModel``
 
     .. attribute:: _table
 
@@ -933,17 +942,17 @@ them (e.g. to change their default sort order):
 
 .. literalinclude:: ../../odoo/addons/test_documentation_examples/extension.py
     :language: python
-    :lines: 5-
+    :lines: 7-
 
 .. literalinclude:: ../../odoo/addons/test_documentation_examples/tests/test_extension.py
     :language: python
-    :lines: 8,13
+    :lines: 10,15
 
 will yield:
 
 .. literalinclude:: ../../odoo/addons/test_documentation_examples/tests/test_extension.py
     :language: text
-    :lines: 11
+    :lines: 13
 
 .. note:: it will also yield the various :ref:`automatic fields
           <reference/orm/model/automatic>` unless they've been disabled

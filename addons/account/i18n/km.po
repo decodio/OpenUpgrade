@@ -3,18 +3,21 @@
 # * account
 # 
 # Translators:
-# Sengtha Chay <sengtha@gmail.com>, 2016
 # Phearom Prom <prom.phearom@gmail.com>, 2016
+# Sengtha Chay <sengtha@gmail.com>, 2016
 # Samkhann Seang <seangsamkhann@gmail.com>, 2016
 # Chan Nath <channath@gmail.com>, 2016
 # AN Souphorn <ansouphorn@gmail.com>, 2017
+# Sitthykun LY <ly.sitthykun@gmail.com>, 2018
+# Lux Sok <sok.lux@gmail.com>, 2018
+# 
 msgid ""
 msgstr ""
 "Project-Id-Version: Odoo Server 10.0\n"
 "Report-Msgid-Bugs-To: \n"
 "POT-Creation-Date: 2017-05-26 08:44+0000\n"
-"PO-Revision-Date: 2017-05-26 08:44+0000\n"
-"Last-Translator: AN Souphorn <ansouphorn@gmail.com>, 2017\n"
+"PO-Revision-Date: 2016-09-07 09:15+0000\n"
+"Last-Translator: Lux Sok <sok.lux@gmail.com>, 2018\n"
 "Language-Team: Khmer (https://www.transifex.com/odoo/teams/41243/km/)\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
@@ -84,7 +87,7 @@ msgstr ""
 #: model:ir.model.fields,field_description:account.field_account_chart_template_code_digits
 #: model:ir.model.fields,field_description:account.field_wizard_multi_charts_accounts_code_digits
 msgid "# of Digits"
-msgstr ""
+msgstr "ឌីជីថល"
 
 #. module: account
 #: model:ir.model.fields,field_description:account.field_account_config_settings_code_digits
@@ -121,7 +124,7 @@ msgstr ""
 #: code:addons/account/models/account.py:610
 #, python-format
 msgid "%s (Copy)"
-msgstr ""
+msgstr "%s (ចម្លង)"
 
 #. module: account
 #: code:addons/account/models/account.py:170
@@ -144,7 +147,7 @@ msgstr ""
 #. module: account
 #: model:ir.ui.view,arch_db:account.view_account_form
 msgid "-> Reconcile"
-msgstr ""
+msgstr "-> ផ្ទៀងផ្ទាត់"
 
 #. module: account
 #: model:ir.ui.view,arch_db:account.view_move_line_form
@@ -160,7 +163,7 @@ msgstr ""
 #. module: account
 #: model:account.payment.term,name:account.account_payment_term_15days
 msgid "15 Days"
-msgstr ""
+msgstr "ថ្ងៃ"
 
 #. module: account
 #: model:account.payment.term,name:account.account_payment_term_net
@@ -186,7 +189,7 @@ msgstr ""
 #: code:addons/account/models/account.py:397
 #, python-format
 msgid ": Refund"
-msgstr ""
+msgstr "៖ សងវិញ"
 
 #. module: account
 #: model:ir.ui.view,arch_db:account.report_trialbalance
@@ -1395,6 +1398,11 @@ msgid "Adjustment Tax"
 msgstr ""
 
 #. module: account
+#: model:ir.model.fields,field_description:account.field_tax_adjustments_wizard_adjustment_type
+msgid "Adjustment Type"
+msgstr ""
+
+#. module: account
 #: model:ir.ui.view,arch_db:account.view_account_tax_template_form
 #: model:ir.ui.view,arch_db:account.view_tax_form
 msgid "Advanced Options"
@@ -2055,6 +2063,12 @@ msgstr ""
 #: model:ir.ui.view,arch_db:account.view_bank_statement_search
 msgid "Bank Statement"
 msgstr "របាយការណ៍ធនាគារ"
+
+#. module: account
+#: code:addons/account/models/account_bank_statement.py:935
+#, python-format
+msgid "Bank Statement %s"
+msgstr ""
 
 #. module: account
 #: model:ir.model,name:account.model_account_bank_statement_line
@@ -3403,6 +3417,19 @@ msgstr ""
 #. module: account
 #: selection:account.payment.term.line,option:0
 msgid "Day(s) after the invoice date"
+msgstr ""
+
+#. module: account
+#: model:res.company,overdue_msg:base.main_company
+msgid ""
+"Dear Sir/Madam,\n"
+"\n"
+"Our records indicate that some payments on your account are still due. Please find details below.\n"
+"If the amount has already been paid, please disregard this notice. Otherwise, please forward us the total amount stated below.\n"
+"If you have any queries regarding your account, Please contact us.\n"
+"\n"
+"Thank you in advance for your cooperation.\n"
+"Best Regards,"
 msgstr ""
 
 #. module: account
@@ -9995,6 +10022,14 @@ msgid ""
 msgstr ""
 
 #. module: account
+#: code:addons/account/models/company.py:118
+#, python-format
+msgid ""
+"You cannot change the currency of the company since some journal items "
+"already exist"
+msgstr ""
+
+#. module: account
 #: code:addons/account/models/account.py:180
 #, python-format
 msgid ""
@@ -10135,6 +10170,12 @@ msgstr ""
 #: model:ir.ui.view,arch_db:account.invoice_form
 #: model:ir.ui.view,arch_db:account.invoice_supplier_form
 msgid "You have"
+msgstr ""
+
+#. module: account
+#: code:addons/account/models/account_payment.py:360
+#, python-format
+msgid "You have to define a sequence for %s in your company."
 msgstr ""
 
 #. module: account
@@ -10501,4 +10542,12 @@ msgstr ""
 #. module: account
 #: model:ir.ui.view,arch_db:account.view_bank_statement_form
 msgid "→ Count"
+msgstr ""
+
+#. module: account
+#: code:addons/account/models/account.py:309
+#, python-format
+msgid ""
+"Currency field should only be set if the journal's currency is different "
+"from the company's. Leave the field blank to use company currency."
 msgstr ""

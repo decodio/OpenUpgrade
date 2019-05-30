@@ -446,7 +446,7 @@ class PaymentTransaction(models.Model):
     @api.onchange('partner_id')
     def _onchange_partner_id(self):
         onchange_vals = self.on_change_partner_id(self.partner_id.id).get('value', {})
-        self.write(onchange_vals)
+        self.update(onchange_vals)
 
     @api.multi
     def on_change_partner_id(self, partner_id):
@@ -490,7 +490,7 @@ class PaymentTransaction(models.Model):
 
             # custom create
             custom_method_name = '%s_create' % acquirer.provider
-            if hasattr(acquirer, custom_method_name):
+            if hasattr(self, custom_method_name):
                 values.update(getattr(self, custom_method_name)(values))
 
         # Default value of reference is

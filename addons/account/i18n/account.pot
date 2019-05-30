@@ -1331,6 +1331,11 @@ msgid "Adjustment Tax"
 msgstr ""
 
 #. module: account
+#: model:ir.model.fields,field_description:account.field_tax_adjustments_wizard_adjustment_type
+msgid "Adjustment Type"
+msgstr ""
+
+#. module: account
 #: model:ir.ui.view,arch_db:account.view_account_tax_template_form
 #: model:ir.ui.view,arch_db:account.view_tax_form
 msgid "Advanced Options"
@@ -1968,6 +1973,12 @@ msgstr ""
 #: model:ir.ui.view,arch_db:account.view_bank_statement_form
 #: model:ir.ui.view,arch_db:account.view_bank_statement_search
 msgid "Bank Statement"
+msgstr ""
+
+#. module: account
+#: code:addons/account/models/account_bank_statement.py:935
+#, python-format
+msgid "Bank Statement %s"
 msgstr ""
 
 #. module: account
@@ -3294,6 +3305,18 @@ msgstr ""
 #. module: account
 #: selection:account.payment.term.line,option:0
 msgid "Day(s) after the invoice date"
+msgstr ""
+
+#. module: account
+#: model:res.company,overdue_msg:base.main_company
+msgid "Dear Sir/Madam,\n"
+"\n"
+"Our records indicate that some payments on your account are still due. Please find details below.\n"
+"If the amount has already been paid, please disregard this notice. Otherwise, please forward us the total amount stated below.\n"
+"If you have any queries regarding your account, Please contact us.\n"
+"\n"
+"Thank you in advance for your cooperation.\n"
+"Best Regards,"
 msgstr ""
 
 #. module: account
@@ -9555,6 +9578,12 @@ msgid "You cannot cancel an invoice which is partially paid. You need to unrecon
 msgstr ""
 
 #. module: account
+#: code:addons/account/models/company.py:118
+#, python-format
+msgid "You cannot change the currency of the company since some journal items already exist"
+msgstr ""
+
+#. module: account
 #: code:addons/account/models/account.py:180
 #, python-format
 msgid "You cannot change the owner company of an account that already contains journal items."
@@ -9672,6 +9701,12 @@ msgstr ""
 #: model:ir.ui.view,arch_db:account.invoice_form
 #: model:ir.ui.view,arch_db:account.invoice_supplier_form
 msgid "You have"
+msgstr ""
+
+#. module: account
+#: code:addons/account/models/account_payment.py:360
+#, python-format
+msgid "You have to define a sequence for %s in your company."
 msgstr ""
 
 #. module: account
@@ -10028,3 +10063,8 @@ msgstr ""
 msgid "→ Count"
 msgstr ""
 
+#. module: account
+#: code:addons/account/models/account.py:309
+#, python-format
+msgid "Currency field should only be set if the journal's currency is different from the company's. Leave the field blank to use company currency."
+msgstr ""

@@ -25,8 +25,8 @@ class MigrationManager(object):
         function. Theses files must respect a directory tree structure: A 'migrations' folder
         which containt a folder by version. Version can be 'module' version or 'server.module'
         version (in this case, the files will only be processed by this version of the server).
-        Python file names must start by `pre` or `post` and will be executed, respectively,
-        before and after the module initialisation. `end` scripts are run after all modules have
+        Python file names must start by `pre-` or `post-` and will be executed, respectively,
+        before and after the module initialisation. `end-` scripts are run after all modules have
         been updated.
         Example:
             <moduledir>
@@ -126,7 +126,8 @@ class MigrationManager(object):
             a.update(b)
             return a
 
-        parsed_installed_version = parse_version(getattr(pkg, 'load_version', pkg.installed_version) or '')
+        installed_version = getattr(pkg, 'load_version', pkg.installed_version) or ''
+        parsed_installed_version = parse_version(installed_version)
         current_version = parse_version(convert_version(pkg.data['version']))
 
         versions = _get_migration_versions(pkg)
@@ -162,7 +163,7 @@ class MigrationManager(object):
                                      mergedict({'name': mod.__name__}, strfmt))
 
                         if hasattr(mod, 'migrate'):
-                            mod.migrate(self.cr, pkg.installed_version)
+                            mod.migrate(self.cr, installed_version)
                         else:
                             _logger.error('module %(addon)s: Each %(stage)s-migration file must have a "migrate(cr, installed_version)" function',
                                           strfmt)
