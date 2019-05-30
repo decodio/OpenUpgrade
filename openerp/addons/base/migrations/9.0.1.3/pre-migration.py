@@ -101,6 +101,7 @@ def migrate_translations(cr):
 @openupgrade.migrate(use_env=True)
 def migrate(env, version):
     cr = env.cr
+    create_backup_schema(cr)
     module_renames = dict(apriori.renamed_modules)
     if not has_recurring_contracts(cr):
         # Don't install contract module without any recurring invoicing
@@ -115,6 +116,31 @@ def migrate(env, version):
     cleanup_modules(cr)
     map_res_partner_type(cr)
     migrate_translations(env.cr)
+
+
+def create_backup_schema(cr):
+    cr.execute("""
+        CREATE SCHEMA v8_data;
+        """)
+    cr.execute("""
+        DO $body$ 
+        DECLARE 
+          r RECORD;BEGIN 
+          FOR r   IN 
+          SELECT   * 
+          FROM     information_schema.TABLES 
+          WHERE    table_schema = 'public' 
+          AND      table_type = 'BASE TABLE' 
+          ORDER BY table_name
+          LOOP 
+               EXECUTE 'CREATE TABLE v8_data.v8_' 
+                        || quote_ident(r.table_name) 
+                        || ' AS SELECT * FROM public.' 
+                        || quote_ident(r.table_name) 
+                        || ';'; 
+          END LOOP; 
+        END $body$;
+        """)
 
 
 def pre_create_columns(cr):
