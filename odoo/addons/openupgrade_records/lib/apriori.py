@@ -50,6 +50,7 @@ merged_modules = [
     ('im_odoo_support', 'im_livechat'),
     ('marketing', 'marketing_campaign'),
     ('website_sale_stock_control', 'website_sale_stock'),
+    ('test_pylint', 'test_lint'),
     # OCA/account-invoicing
     ('purchase_stock_picking_return_invoicing_open_qty',
      'purchase_stock_picking_return_invoicing'),
@@ -73,6 +74,7 @@ merged_modules = [
     # OCA/website
     ('website_blog_mgmt', 'website_blog'),
     ('website_blog_share', 'website_blog'),
+    ('website_img_bg_style', 'website'),
     # OCA/l10n-brazil
     ('l10n_br_data_base', 'l10n_br_base'),
     ('l10n_br_data_account', 'l10n_br_account'),
